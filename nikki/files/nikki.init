@@ -8,6 +8,8 @@ PROG="/usr/bin/mihomo"
 
 . "$IPKG_INSTROOT/etc/nikki/scripts/include.sh"
 
+. "$IPKG_INSTROOT/etc/nikki/scripts/tproxy_hook.sh"
+
 extra_command 'update_subscription' 'Update subscription by section id'
 
 boot_func() {
@@ -267,6 +269,8 @@ service_started() {
 	config_get_bool proxy_enabled "proxy" "enabled" 0
 	if [ "$proxy_enabled" = 0 ]; then
 		log "Proxy" "Disabled."
+		# tproxy hook
+		hook_start_tproxy
 		return
 	fi
 	# get config
@@ -407,27 +411,30 @@ cleanup() {
 	local tproxy_route_table tun_route_table
 	config_get tproxy_route_table "routing" "tproxy_route_table" "80"
 	config_get tun_route_table "routing" "tun_route_table" "81"
-	# delete routing policy
-	ip -4 rule del table "$tproxy_route_table" > /dev/null 2>&1
-	ip -4 rule del table "$tun_route_table" > /dev/null 2>&1
-	ip -6 rule del table "$tproxy_route_table" > /dev/null 2>&1
-	ip -6 rule del table "$tun_route_table" > /dev/null 2>&1
-	# delete routing table
-	ip -4 route flush table "$tproxy_route_table" > /dev/null 2>&1
-	ip -4 route flush table "$tun_route_table" > /dev/null 2>&1
-	ip -6 route flush table "$tproxy_route_table" > /dev/null 2>&1
-	ip -6 route flush table "$tun_route_table" > /dev/null 2>&1
-	# delete hijack
-	nft delete table inet nikki > /dev/null 2>&1
-	local handles handle
-	handles=$(nft --json list table inet fw4 | jsonfilter -q -e "@['nftables'][*]['rule']" | jsonfilter -q -a -e "@[@['chain']='input']" | jsonfilter -q -a -e "@[@['comment']='nikki']" | jsonfilter -q -a -e "@[*]['handle']")
-	for handle in $handles; do
-		nft delete rule inet fw4 input handle "$handle"
-	done
-	handles=$(nft --json list table inet fw4 | jsonfilter -q -e "@['nftables'][*]['rule']" | jsonfilter -q -a -e "@[@['chain']='forward']" | jsonfilter -q -a -e "@[@['comment']='nikki']" | jsonfilter -q -a -e "@[*]['handle']")
-	for handle in $handles; do
-		nft delete rule inet fw4 forward handle "$handle"
-	done
+	if [ "$core_only" = 0 ]; then
+		# delete routing policy
+		ip -4 rule del table "$tproxy_route_table" > /dev/null 2>&1
+		ip -4 rule del table "$tun_route_table" > /dev/null 2>&1
+		ip -6 rule del table "$tproxy_route_table" > /dev/null 2>&1
+		ip -6 rule del table "$tun_route_table" > /dev/null 2>&1
+		# delete routing table
+		ip -4 route flush table "$tproxy_route_table" > /dev/null 2>&1
+		ip -4 route flush table "$tun_route_table" > /dev/null 2>&1
+		ip -6 route flush table "$tproxy_route_table" > /dev/null 2>&1
+		ip -6 route flush table "$tun_route_table" > /dev/null 2>&1
+		# delete hijack
+		nft delete table inet nikki > /dev/null 2>&1
+		local handles handle
+		handles=$(nft --json list table inet fw4 | jsonfilter -q -e "@['nftables'][*]['rule']" | jsonfilter -q -a -e "@[@['chain']='input']" | jsonfilter -q -a -e "@[@['comment']='nikki']" | jsonfilter -q -a -e "@[*]['handle']")
+		for handle in $handles; do
+			nft delete rule inet fw4 input handle "$handle"
+		done
+		handles=$(nft --json list table inet fw4 | jsonfilter -q -e "@['nftables'][*]['rule']" | jsonfilter -q -a -e "@[@['chain']='forward']" | jsonfilter -q -a -e "@[@['comment']='nikki']" | jsonfilter -q -a -e "@[*]['handle']")
+		for handle in $handles; do
+			nft delete rule inet fw4 forward handle "$handle"
+		done
+	fi
+	hook_clean_tproxy
 	# delete started flag
 	rm "$STARTED_FLAG_PATH" > /dev/null 2>&1
 	# revert fix compatible with dockerd
